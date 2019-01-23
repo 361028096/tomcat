@@ -33,8 +33,8 @@ public class ResourceBase implements Serializable, Injectable {
 
     private static final long serialVersionUID = 1L;
 
-    // ------------------------------------------------------------- Properties
 
+    // ------------------------------------------------------------- Properties
 
     /**
      * The description of this resource.
@@ -87,6 +87,10 @@ public class ResourceBase implements Serializable, Injectable {
     }
 
     public void setLookupName(String lookupName) {
+        if (lookupName == null || lookupName.length() == 0) {
+            this.lookupName = null;
+            return;
+        }
         this.lookupName = lookupName;
     }
 

@@ -133,7 +133,7 @@ public class CoyoteAdapter implements Adapter {
         Response response = (Response) res.getNote(ADAPTER_NOTES);
 
         if (request == null) {
-            throw new IllegalStateException("Dispatch may only happen on an existing request.");
+            throw new IllegalStateException(sm.getString("coyoteAdapter.nullRequest"));
         }
 
         boolean success = true;
@@ -870,9 +870,9 @@ public class CoyoteAdapter implements Adapter {
         }
 
         // Set the authorization type
-        String authtype = req.getAuthType().toString();
-        if (authtype != null) {
-            request.setAuthType(authtype);
+        String authType = req.getAuthType().toString();
+        if (authType != null) {
+            request.setAuthType(authType);
         }
     }
 

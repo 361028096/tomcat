@@ -323,7 +323,7 @@ public class SecureNioChannel extends NioChannel  {
         }
 
         if (log.isDebugEnabled()) {
-            log.debug(sm.getString("channel.nio.ssl.sniHostName", hostName));
+            log.debug(sm.getString("channel.nio.ssl.sniHostName", sc, hostName));
         }
 
         sslEngine = endpoint.createSSLEngine(hostName, clientRequestedCiphers,
@@ -387,7 +387,7 @@ public class SecureNioChannel extends NioChannel  {
                             selector = Selector.open();
                             key = getIOChannel().register(selector, hsStatus);
                         } else {
-                            key.interestOps(hsStatus); // null warning supressed
+                            key.interestOps(hsStatus); // null warning suppressed
                         }
                         int keyCount = selector.select(timeout);
                         if (keyCount == 0 && ((System.currentTimeMillis()-now) >= timeout)) {
@@ -565,11 +565,6 @@ public class SecureNioChannel extends NioChannel  {
      */
     @Override
     public int read(ByteBuffer dst) throws IOException {
-        // Make sure we only use the ApplicationBufferHandler's buffers
-        if (dst != getBufHandler().getReadBuffer() && (getAppReadBufHandler() == null
-                || dst != getAppReadBufHandler().getByteBuffer())) {
-            throw new IllegalArgumentException(sm.getString("channel.nio.ssl.invalidBuffer"));
-        }
         //are we in the middle of closing or closed?
         if ( closing || closed) return -1;
         //did we finish our handshake?

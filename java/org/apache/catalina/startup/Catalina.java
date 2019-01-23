@@ -35,6 +35,8 @@ import org.apache.catalina.Container;
 import org.apache.catalina.LifecycleException;
 import org.apache.catalina.LifecycleState;
 import org.apache.catalina.Server;
+import org.apache.catalina.connector.Connector;
+import org.apache.catalina.core.StandardContext;
 import org.apache.catalina.security.SecurityConfig;
 import org.apache.juli.ClassLoaderLogManager;
 import org.apache.juli.logging.Log;
@@ -43,11 +45,12 @@ import org.apache.tomcat.util.ExceptionUtils;
 import org.apache.tomcat.util.digester.Digester;
 import org.apache.tomcat.util.digester.Rule;
 import org.apache.tomcat.util.digester.RuleSet;
+import org.apache.tomcat.util.file.ConfigFileLoader;
+import org.apache.tomcat.util.file.ConfigurationSource;
 import org.apache.tomcat.util.log.SystemLogHandler;
 import org.apache.tomcat.util.res.StringManager;
 import org.xml.sax.Attributes;
 import org.xml.sax.InputSource;
-import org.xml.sax.SAXParseException;
 
 
 /**
@@ -77,6 +80,7 @@ public class Catalina {
     protected static final StringManager sm =
         StringManager.getManager(Constants.Package);
 
+    public static final String SERVER_XML = "conf/server.xml";
 
     // ----------------------------------------------------- Instance Variables
 
@@ -88,7 +92,7 @@ public class Catalina {
     /**
      * Pathname to the server configuration file.
      */
-    protected String configFile = "conf/server.xml";
+    protected String configFile = SERVER_XML;
 
     // XXX Should be moved to embedded
     /**
@@ -280,9 +284,18 @@ public class Catalina {
         digester.setValidating(false);
         digester.setRulesValidation(true);
         Map<Class<?>, List<String>> fakeAttributes = new HashMap<>();
-        List<String> attrs = new ArrayList<>();
-        attrs.add("className");
-        fakeAttributes.put(Object.class, attrs);
+        // Ignore className on all elements
+        List<String> objectAttrs = new ArrayList<>();
+        objectAttrs.add("className");
+        fakeAttributes.put(Object.class, objectAttrs);
+        // Ignore attribute added by Eclipse for its internal tracking
+        List<String> contextAttrs = new ArrayList<>();
+        contextAttrs.add("source");
+        fakeAttributes.put(StandardContext.class, contextAttrs);
+        // Ignore Connector attribute used internally but set on Server
+        List<String> connectorAttrs = new ArrayList<>();
+        connectorAttrs.add("portOffset");
+        fakeAttributes.put(Connector.class, connectorAttrs);
         digester.setFakeAttributes(fakeAttributes);
         digester.setUseContextClassLoader(true);
 
@@ -344,6 +357,8 @@ public class Catalina {
         digester.addSetNext("Server/Service/Connector",
                             "addConnector",
                             "org.apache.catalina.connector.Connector");
+
+        digester.addRule("Server/Service/Connector", new AddPortOffsetRule());
 
         digester.addObjectCreate("Server/Service/Connector/SSLHostConfig",
                                  "org.apache.tomcat.util.net.SSLHostConfig");
@@ -479,23 +494,24 @@ public class Catalina {
                 digester.push(this);
                 digester.parse(is);
             } catch (Exception e) {
-                log.error("Catalina.stop: ", e);
+                log.error(sm.getString("catalina.stopError"), e);
                 System.exit(1);
             }
         } else {
             // Server object already present. Must be running as a service
             try {
                 s.stop();
+                s.destroy();
             } catch (LifecycleException e) {
-                log.error("Catalina.stop: ", e);
+                log.error(sm.getString("catalina.stopError"), e);
             }
             return;
         }
 
         // Stop the existing server
         s = getServer();
-        if (s.getPort()>0) {
-            try (Socket socket = new Socket(s.getAddress(), s.getPort());
+        if (s.getPortWithOffset() > 0) {
+            try (Socket socket = new Socket(s.getAddress(), s.getPortWithOffset());
                     OutputStream stream = socket.getOutputStream()) {
                 String shutdown = s.getShutdown();
                 for (int i = 0; i < shutdown.length(); i++) {
@@ -503,13 +519,13 @@ public class Catalina {
                 }
                 stream.flush();
             } catch (ConnectException ce) {
-                log.error(sm.getString("catalina.stopServer.connectException",
-                                       s.getAddress(),
-                                       String.valueOf(s.getPort())));
-                log.error("Catalina.stop: ", ce);
+                log.error(sm.getString("catalina.stopServer.connectException", s.getAddress(),
+                        String.valueOf(s.getPortWithOffset()), String.valueOf(s.getPort()),
+                        String.valueOf(s.getPortOffset())));
+                log.error(sm.getString("catalina.stopError"), ce);
                 System.exit(1);
             } catch (IOException e) {
-                log.error("Catalina.stop: ", e);
+                log.error(sm.getString("catalina.stopError"), e);
                 System.exit(1);
             }
         } else {
@@ -536,89 +552,29 @@ public class Catalina {
         // Before digester - it may be needed
         initNaming();
 
+        // Set configuration source
+        ConfigFileLoader.setSource(new CatalinaBaseConfigurationSource(Bootstrap.getCatalinaBaseFile(), getConfigFile()));
+        File file = configFile();
+
         // Create and execute our Digester
         Digester digester = createStartDigester();
 
-        InputSource inputSource = null;
-        InputStream inputStream = null;
-        File file = null;
-        try {
-            try {
-                file = configFile();
-                inputStream = new FileInputStream(file);
-                inputSource = new InputSource(file.toURI().toURL().toString());
-            } catch (Exception e) {
-                if (log.isDebugEnabled()) {
-                    log.debug(sm.getString("catalina.configFail", file), e);
+        try (ConfigurationSource.Resource resource = ConfigFileLoader.getSource().getServerXml()) {
+            InputStream inputStream = resource.getInputStream();
+            InputSource inputSource = new InputSource(resource.getURI().toURL().toString());
+            inputSource.setByteStream(inputStream);
+            digester.push(this);
+            digester.parse(inputSource);
+        } catch (Exception e) {
+            if  (file == null) {
+                log.warn(sm.getString("catalina.configFail", getConfigFile() + "] or [server-embed.xml"), e);
+            } else {
+                log.warn(sm.getString("catalina.configFail", file.getAbsolutePath()), e);
+                if (file.exists() && !file.canRead()) {
+                    log.warn(sm.getString("catalina.incorrectPermissions"));
                 }
             }
-            if (inputStream == null) {
-                try {
-                    inputStream = getClass().getClassLoader()
-                        .getResourceAsStream(getConfigFile());
-                    inputSource = new InputSource
-                        (getClass().getClassLoader()
-                         .getResource(getConfigFile()).toString());
-                } catch (Exception e) {
-                    if (log.isDebugEnabled()) {
-                        log.debug(sm.getString("catalina.configFail",
-                                getConfigFile()), e);
-                    }
-                }
-            }
-
-            // This should be included in catalina.jar
-            // Alternative: don't bother with xml, just create it manually.
-            if (inputStream == null) {
-                try {
-                    inputStream = getClass().getClassLoader()
-                            .getResourceAsStream("server-embed.xml");
-                    inputSource = new InputSource
-                    (getClass().getClassLoader()
-                            .getResource("server-embed.xml").toString());
-                } catch (Exception e) {
-                    if (log.isDebugEnabled()) {
-                        log.debug(sm.getString("catalina.configFail",
-                                "server-embed.xml"), e);
-                    }
-                }
-            }
-
-
-            if (inputStream == null || inputSource == null) {
-                if  (file == null) {
-                    log.warn(sm.getString("catalina.configFail",
-                            getConfigFile() + "] or [server-embed.xml]"));
-                } else {
-                    log.warn(sm.getString("catalina.configFail",
-                            file.getAbsolutePath()));
-                    if (file.exists() && !file.canRead()) {
-                        log.warn("Permissions incorrect, read permission is not allowed on the file.");
-                    }
-                }
-                return;
-            }
-
-            try {
-                inputSource.setByteStream(inputStream);
-                digester.push(this);
-                digester.parse(inputSource);
-            } catch (SAXParseException spe) {
-                log.warn("Catalina.start using " + getConfigFile() + ": " +
-                        spe.getMessage());
-                return;
-            } catch (Exception e) {
-                log.warn("Catalina.start using " + getConfigFile() + ": " , e);
-                return;
-            }
-        } finally {
-            if (inputStream != null) {
-                try {
-                    inputStream.close();
-                } catch (IOException e) {
-                    // Ignore
-                }
-            }
+            return;
         }
 
         getServer().setCatalina(this);
@@ -635,13 +591,13 @@ public class Catalina {
             if (Boolean.getBoolean("org.apache.catalina.startup.EXIT_ON_INIT_FAILURE")) {
                 throw new java.lang.Error(e);
             } else {
-                log.error("Catalina.start", e);
+                log.error(sm.getString("catalina.initError"), e);
             }
         }
 
         long t2 = System.nanoTime();
         if(log.isInfoEnabled()) {
-            log.info("Initialization processed in " + ((t2 - t1) / 1000000) + " ms");
+            log.info(sm.getString("catalina.init", Long.valueOf((t2 - t1) / 1000000)));
         }
     }
 
@@ -671,7 +627,7 @@ public class Catalina {
         }
 
         if (getServer() == null) {
-            log.fatal("Cannot start server. Server instance is not configured.");
+            log.fatal(sm.getString("catalina.noServer"));
             return;
         }
 
@@ -692,7 +648,7 @@ public class Catalina {
 
         long t2 = System.nanoTime();
         if(log.isInfoEnabled()) {
-            log.info("Server startup in " + ((t2 - t1) / 1000000) + " ms");
+            log.info(sm.getString("catalina.startup", Long.valueOf((t2 - t1) / 1000000)));
         }
 
         // Register shutdown hook
@@ -756,7 +712,7 @@ public class Catalina {
                 s.destroy();
             }
         } catch (LifecycleException e) {
-            log.error("Catalina.stop", e);
+            log.error(sm.getString("catalina.stopError"), e);
         }
 
     }
@@ -777,11 +733,7 @@ public class Catalina {
      */
     protected void usage() {
 
-        System.out.println
-            ("usage: java org.apache.catalina.startup.Catalina"
-             + " [ -config {pathname} ]"
-             + " [ -nonaming ] "
-             + " { -help | start | stop }");
+        System.out.println(sm.getString("catalina.usage"));
 
     }
 
@@ -804,7 +756,7 @@ public class Catalina {
     protected void initNaming() {
         // Setting additional variables
         if (!useNaming) {
-            log.info( "Catalina naming disabled");
+            log.info(sm.getString("catalina.noNatming"));
             System.setProperty("catalina.useNaming", "false");
         } else {
             System.setProperty("catalina.useNaming", "true");
@@ -825,7 +777,7 @@ public class Catalina {
                     (javax.naming.Context.INITIAL_CONTEXT_FACTORY,
                      "org.apache.naming.java.javaURLContextFactory");
             } else {
-                log.debug( "INITIAL_CONTEXT_FACTORY already set " + value );
+                log.debug("INITIAL_CONTEXT_FACTORY already set " + value );
             }
         }
     }

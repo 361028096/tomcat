@@ -34,10 +34,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import javax.servlet.http.WebConnection;
 
+import org.apache.coyote.ActionCode;
 import org.apache.coyote.Adapter;
 import org.apache.coyote.CloseNowException;
 import org.apache.coyote.ProtocolException;
 import org.apache.coyote.Request;
+import org.apache.coyote.Response;
 import org.apache.coyote.http11.upgrade.InternalHttpUpgradeHandler;
 import org.apache.coyote.http2.HpackDecoder.HeaderEmitter;
 import org.apache.coyote.http2.HpackEncoder.State;
@@ -599,7 +601,7 @@ class Http2UpgradeHandler extends AbstractStream implements InternalHttpUpgradeH
                 if (log.isDebugEnabled()) {
                     log.debug(headerFrameBuffers.getPayload().limit() + " bytes");
                 }
-                ByteUtil.set31Bits(headerFrameBuffers.getHeader(), 5, stream.getIdentifier().intValue());
+                ByteUtil.set31Bits(headerFrameBuffers.getHeader(), 5, stream.getIdAsInt());
                 headerFrameBuffers.endFrame();
             } else if (state == State.UNDERFLOW) {
                 headerFrameBuffers.expandPayload();
@@ -642,7 +644,7 @@ class Http2UpgradeHandler extends AbstractStream implements InternalHttpUpgradeH
             }
         }
         if (writeable) {
-            ByteUtil.set31Bits(header, 5, stream.getIdentifier().intValue());
+            ByteUtil.set31Bits(header, 5, stream.getIdAsInt());
             synchronized (socketWrapper) {
                 try {
                     socketWrapper.write(true, header, 0, header.length);
@@ -692,7 +694,7 @@ class Http2UpgradeHandler extends AbstractStream implements InternalHttpUpgradeH
             ByteUtil.set31Bits(frame, 9, increment);
             socketWrapper.write(true, frame, 0, frame.length);
             // Change stream Id and re-use
-            ByteUtil.set31Bits(frame, 5, stream.getIdentifier().intValue());
+            ByteUtil.set31Bits(frame, 5, stream.getIdAsInt());
             try {
                 socketWrapper.write(true, frame, 0, frame.length);
                 socketWrapper.flush(true);
@@ -721,7 +723,7 @@ class Http2UpgradeHandler extends AbstractStream implements InternalHttpUpgradeH
     }
 
 
-    int reserveWindowSize(Stream stream, int reservation) throws IOException {
+    int reserveWindowSize(Stream stream, int reservation, boolean block) throws IOException {
         // Need to be holding the stream lock so releaseBacklog() can't notify
         // this thread until after this thread enters wait()
         int allocation = 0;
@@ -773,12 +775,16 @@ class Http2UpgradeHandler extends AbstractStream implements InternalHttpUpgradeH
                     }
                 }
                 if (allocation == 0) {
-                    try {
-                        stream.wait();
-                    } catch (InterruptedException e) {
-                        throw new IOException(sm.getString(
-                                "upgradeHandler.windowSizeReservationInterrupted", connectionId,
-                                stream.getIdentifier(), Integer.toString(reservation)), e);
+                    if (block) {
+                        try {
+                            stream.wait();
+                        } catch (InterruptedException e) {
+                            throw new IOException(sm.getString(
+                                    "upgradeHandler.windowSizeReservationInterrupted", connectionId,
+                                    stream.getIdentifier(), Integer.toString(reservation)), e);
+                        }
+                    } else {
+                        return 0;
                     }
                 }
             } while (allocation == 0);
@@ -804,8 +810,37 @@ class Http2UpgradeHandler extends AbstractStream implements InternalHttpUpgradeH
 
         if (streamsToNotify != null) {
             for (AbstractStream stream : streamsToNotify) {
-                synchronized (stream) {
-                    stream.notifyAll();
+                if (log.isDebugEnabled()) {
+                    log.debug(sm.getString("upgradeHandler.releaseBacklog",
+                            connectionId, stream.getIdentifier()));
+                }
+                // There is never any O/P on stream zero but it is included in
+                // the backlog as it simplifies the code. Skip it if it appears
+                // here.
+                if (this == stream) {
+                    continue;
+                }
+                Response coyoteResponse = ((Stream) stream).getCoyoteResponse();
+                if (coyoteResponse.getWriteListener() == null) {
+                    if (log.isDebugEnabled()) {
+                        log.debug(sm.getString("upgradeHandler.notifyAll",
+                            connectionId, stream.getIdentifier()));
+                    }
+                    // Blocking, so use notify to release StreamOutputBuffer
+                    synchronized (stream) {
+                        stream.notifyAll();
+                    }
+                } else {
+                    if (log.isDebugEnabled()) {
+                        log.debug(sm.getString("upgradeHandler.dispatchWrite",
+                            connectionId, stream.getIdentifier()));
+                    }
+                    // Non-blocking so dispatch
+                    coyoteResponse.action(ActionCode.DISPATCH_WRITE, null);
+                    // Need to explicitly execute dispatches on the
+                    // StreamProcessor as this thread is being processed by an
+                    // UpgradeProcessor which won't see this dispatch
+                    coyoteResponse.action(ActionCode.DISPATCH_EXECUTE, null);
                 }
             }
         }
@@ -1129,8 +1164,8 @@ class Http2UpgradeHandler extends AbstractStream implements InternalHttpUpgradeH
         // is sent before the next stream is created for a PUSH_PROMISE.
         synchronized (socketWrapper) {
             pushStream = createLocalStream(request);
-            writeHeaders(associatedStream, pushStream.getIdentifier().intValue(),
-                    request.getMimeHeaders(), false, Constants.DEFAULT_HEADERS_FRAME_SIZE);
+            writeHeaders(associatedStream, pushStream.getIdAsInt(), request.getMimeHeaders(),
+                    false, Constants.DEFAULT_HEADERS_FRAME_SIZE);
         }
 
         pushStream.sentPushPromise();
@@ -1355,7 +1390,7 @@ class Http2UpgradeHandler extends AbstractStream implements InternalHttpUpgradeH
                     stream.close(new StreamException(sm.getString(
                             "upgradeHandler.windowSizeTooBig", connectionId,
                             stream.getIdentifier()),
-                            h2e.getError(), stream.getIdentifier().intValue()));
+                            h2e.getError(), stream.getIdAsInt()));
                }
             }
         } else {

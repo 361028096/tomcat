@@ -24,7 +24,7 @@
 
     <properties>
         <author email="craigmcc@apache.org">Craig R. McClanahan</author>
-        <title>Manager App HOW-TO</title>
+        <title>Manager App How-To</title>
     </properties>
 
 <body>
@@ -337,6 +337,10 @@ including a Context configuration XML file in
 <li><code>tag</code>: Specifying a tag name, this allows associating the
     deployed webapp with a tag or label. If the web application is undeployed,
     it can be later redeployed when needed using only the tag.</li>
+<li><code>config </code>: URL of a Context configuration ".xml" file in the
+    format <strong>file:/absolute/path/to/a/context.xml</strong>. This must be
+    the absolute path of a web application Context configuration ".xml" file
+    which contains the Context configuration element.</li>
 </ul>
 
 <p><strong>NOTE</strong> - This command is the logical
@@ -1202,7 +1206,7 @@ for the <em>Ant</em> (version 1.4 or later) build tool.  In order to use these
 commands, you must perform the following setup operations:</p>
 <ul>
 <li>Download the binary distribution of Ant from
-    <a href="http://ant.apache.org">http://ant.apache.org</a>.
+    <a href="https://ant.apache.org">https://ant.apache.org</a>.
     You must use version <strong>1.4</strong> or later.</li>
 <li>Install the Ant distribution in a convenient directory (called
     ANT_HOME in the remainder of these instructions).</li>
@@ -1376,7 +1380,7 @@ in which you can specify
 its full set of attributes, but <code>input</code>, <code>inputstring</code> and
 <code>inputencoding</code> that, even if accepted, are not used because they have
 no meaning in this context.
-Refer to <a href="http://ant.apache.org">ant manual</a> for details on
+Refer to <a href="https://ant.apache.org">ant manual</a> for details on
 <code>&lt;redirector&gt;</code> element attributes.
 </p>
 

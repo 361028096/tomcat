@@ -29,6 +29,7 @@ import org.apache.tomcat.util.ExceptionUtils;
 import org.apache.tomcat.util.buf.ByteChunk;
 import org.apache.tomcat.util.buf.MessageBytes;
 import org.apache.tomcat.util.http.parser.Host;
+import org.apache.tomcat.util.log.UserDataHelper;
 import org.apache.tomcat.util.net.AbstractEndpoint.Handler.SocketState;
 import org.apache.tomcat.util.net.DispatchType;
 import org.apache.tomcat.util.net.SSLSupport;
@@ -50,6 +51,16 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
     protected final Adapter adapter;
     protected final AsyncStateMachine asyncStateMachine;
     private volatile long asyncTimeout = -1;
+    /*
+     * Tracks the current async generation when a timeout is dispatched. In the
+     * time it takes for a container thread to be allocated and the timeout
+     * processing to start, it is possible that the application completes this
+     * generation of async processing and starts a new one. If the timeout is
+     * then processed against the new generation, response mix-up can occur.
+     * This field is used to ensure that any timeout event processed is for the
+     * current async generation. This prevents the response mix-up.
+     */
+    private volatile long asyncTimeoutGeneration = 0;
     protected final Request request;
     protected final Response response;
     protected volatile SocketWrapperBase<?> socketWrapper = null;
@@ -61,6 +72,7 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
      */
     private ErrorState errorState = ErrorState.NONE;
 
+    protected final UserDataHelper userDataHelper;
 
     public AbstractProcessor(Adapter adapter) {
         this(adapter, new Request(), new Response());
@@ -75,6 +87,7 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
         response.setHook(this);
         request.setResponse(response);
         request.setHook(this);
+        userDataHelper = new UserDataHelper(getLog());
     }
 
     /**
@@ -253,6 +266,12 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
     protected void parseHost(MessageBytes valueMB) {
         if (valueMB == null || valueMB.isNull()) {
             populateHost();
+            populatePort();
+            return;
+        } else if (valueMB.getLength() == 0) {
+            // Empty Host header so set sever name to empty string
+            request.serverName().setString("");
+            populatePort();
             return;
         }
 
@@ -294,20 +313,47 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
 
         } catch (IllegalArgumentException e) {
             // IllegalArgumentException indicates that the host name is invalid
+            UserDataHelper.Mode logMode = userDataHelper.getNextMode();
+            if (logMode != null) {
+                String message = sm.getString("abstractProcessor.hostInvalid", valueMB.toString());
+                switch (logMode) {
+                    case INFO_THEN_DEBUG:
+                        message += sm.getString("abstractProcessor.fallToDebug");
+                        //$FALL-THROUGH$
+                    case INFO:
+                        getLog().info(message, e);
+                        break;
+                    case DEBUG:
+                        getLog().debug(message, e);
+                }
+            }
+
             response.setStatus(400);
-            setErrorState(ErrorState.CLOSE_CLEAN, null);
+            setErrorState(ErrorState.CLOSE_CLEAN, e);
         }
     }
 
 
     /**
-     * Called when a host name is not present in the request (e.g. HTTP/1.0).
-     * It populates the server name and port with appropriate information. The
-     * source is expected to vary by protocol.
+     * Called when a host header is not present in the request (e.g. HTTP/1.0).
+     * It populates the server name with appropriate information. The source is
+     * expected to vary by protocol.
      * <p>
      * The default implementation is a NO-OP.
      */
     protected void populateHost() {
+        // NO-OP
+    }
+
+
+    /**
+     * Called when a host header is not present or is empty in the request (e.g.
+     * HTTP/1.0). It populates the server port with appropriate information. The
+     * source is expected to vary by protocol.
+     * <p>
+     * The default implementation is a NO-OP.
+     */
+    protected void populatePort() {
         // NO-OP
     }
 
@@ -519,14 +565,13 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
             break;
         }
         case NB_READ_INTEREST: {
-            if (!isRequestBodyFullyRead()) {
-                registerReadInterest();
-            }
+            AtomicBoolean isReady = (AtomicBoolean)param;
+            isReady.set(isReadyForRead());
             break;
         }
         case NB_WRITE_INTEREST: {
             AtomicBoolean isReady = (AtomicBoolean)param;
-            isReady.set(isReady());
+            isReady.set(isReadyForWrite());
             break;
         }
         case DISPATCH_READ: {
@@ -602,7 +647,14 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
     private void doTimeoutAsync() {
         // Avoid multiple timeouts
         setAsyncTimeout(-1);
+        asyncTimeoutGeneration = asyncStateMachine.getCurrentGeneration();
         processSocketEvent(SocketEvent.TIMEOUT, true);
+    }
+
+
+    @Override
+    public boolean checkAsyncTimeoutGeneration() {
+        return asyncTimeoutGeneration == asyncStateMachine.getCurrentGeneration();
     }
 
 
@@ -728,13 +780,26 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
     }
 
 
+    protected boolean isReadyForRead() {
+        if (available(true) > 0) {
+            return true;
+        }
+
+        if (!isRequestBodyFullyRead()) {
+            registerReadInterest();
+        }
+
+        return false;
+    }
+
+
     protected abstract boolean isRequestBodyFullyRead();
 
 
     protected abstract void registerReadInterest();
 
 
-    protected abstract boolean isReady();
+    protected abstract boolean isReadyForWrite();
 
 
     protected void executeDispatches() {

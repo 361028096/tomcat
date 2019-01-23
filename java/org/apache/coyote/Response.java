@@ -98,7 +98,7 @@ public final class Response {
     /**
      * Committed flag.
      */
-    volatile boolean commited = false;
+    volatile boolean committed = false;
 
 
     /**
@@ -227,10 +227,6 @@ public final class Response {
      * @param status The status value to set
      */
     public void setStatus(int status) {
-        if (this.status > 399) {
-            // Don't overwrite first recorded error status
-            return;
-        }
         this.status = status;
     }
 
@@ -256,15 +252,15 @@ public final class Response {
 
 
     public boolean isCommitted() {
-        return commited;
+        return committed;
     }
 
 
     public void setCommitted(boolean v) {
-        if (v && !this.commited) {
+        if (v && !this.committed) {
             this.commitTime = System.currentTimeMillis();
         }
-        this.commited = v;
+        this.committed = v;
     }
 
     /**
@@ -337,7 +333,7 @@ public final class Response {
 
     public void reset() throws IllegalStateException {
 
-        if (commited) {
+        if (committed) {
             throw new IllegalStateException();
         }
 
@@ -616,7 +612,7 @@ public final class Response {
         contentLength = -1;
         status = 200;
         message = null;
-        commited = false;
+        committed = false;
         commitTime = -1;
         errorException = null;
         errorState.set(0);

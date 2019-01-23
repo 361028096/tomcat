@@ -74,7 +74,7 @@ import org.apache.tomcat.util.modeler.Util;
 public class StandardWrapper extends ContainerBase
     implements ServletConfig, Wrapper, NotificationEmitter {
 
-    private static final Log log = LogFactory.getLog(StandardWrapper.class);
+    private final Log log = LogFactory.getLog(StandardWrapper.class); // must not be static
 
     protected static final String[] DEFAULT_SERVLET_METHODS = new String[] {
                                                     "GET", "HEAD", "POST" };
@@ -990,9 +990,8 @@ public class StandardWrapper extends ContainerBase
                 jspMonitorON = new ObjectName(oname.toString());
                 Registry.getRegistry(null, null)
                     .registerComponent(instance, jspMonitorON, null);
-            } catch( Exception ex ) {
-                log.info("Error registering JSP monitoring with jmx " +
-                         instance);
+            } catch (Exception ex) {
+                log.info(sm.getString("standardWrapper.jspMonitorError", instance));
             }
         }
     }
@@ -1041,7 +1040,7 @@ public class StandardWrapper extends ContainerBase
                 unavailable(null);
 
                 // Added extra log statement for Bugzilla 36630:
-                // http://bz.apache.org/bugzilla/show_bug.cgi?id=36630
+                // https://bz.apache.org/bugzilla/show_bug.cgi?id=36630
                 if(log.isDebugEnabled()) {
                     log.debug(sm.getString("standardWrapper.instantiate", servletClass), e);
                 }
@@ -1134,7 +1133,7 @@ public class StandardWrapper extends ContainerBase
             throw f;
         } catch (Throwable f) {
             ExceptionUtils.handleThrowable(f);
-            getServletContext().log("StandardWrapper.Throwable", f );
+            getServletContext().log(sm.getString("standardWrapper.initException", getName()), f);
             // If the servlet wanted to be unavailable it would have
             // said so, so do not call unavailable(null).
             throw new ServletException

@@ -103,7 +103,8 @@ public class ErrorReportValve extends ValveBase {
                 }
                 // Close immediately to signal to the client that something went
                 // wrong
-                response.getCoyoteResponse().action(ActionCode.CLOSE_NOW, null);
+                response.getCoyoteResponse().action(ActionCode.CLOSE_NOW,
+                        request.getAttribute(RequestDispatcher.ERROR_EXCEPTION));
             }
             return;
         }
@@ -371,9 +372,8 @@ public class ErrorReportValve extends ValveBase {
         response.setContentType("text/html");
         response.setCharacterEncoding("UTF-8");
 
-        try {
-            OutputStream os = response.getOutputStream();
-            InputStream is = new FileInputStream(file);
+        try (OutputStream os = response.getOutputStream();
+                InputStream is = new FileInputStream(file);){
             IOTools.flow(is, os);
         } catch (IOException e) {
             getContainer().getLogger().warn(

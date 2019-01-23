@@ -547,10 +547,10 @@ public class AjpProcessor extends AbstractProcessor {
             if (messageLength > message.getBuffer().length) {
                 // Message too long for the buffer
                 // Need to trigger a 400 response
-                throw new IllegalArgumentException(sm.getString(
-                        "ajpprocessor.header.tooLong",
-                        Integer.valueOf(messageLength),
-                        Integer.valueOf(buf.length)));
+                String msg = sm.getString("ajpprocessor.header.tooLong",
+                        Integer.valueOf(messageLength), Integer.valueOf(buf.length));
+                log.error(msg);
+                throw new IllegalArgumentException(msg);
             }
             read(buf, Constants.H_SIZE, messageLength, true);
             return true;
@@ -858,19 +858,30 @@ public class AjpProcessor extends AbstractProcessor {
     /**
      * {@inheritDoc}
      * <p>
-     * This implementation populates the server name and port from the local
-     * name and port provided by the AJP message.
+     * This implementation populates the server name from the local name
+     * provided by the AJP message.
      */
     @Override
     protected void populateHost() {
-        // No host information (HTTP/1.0)
-        request.setServerPort(request.getLocalPort());
         try {
             request.serverName().duplicate(request.localName());
         } catch (IOException e) {
             response.setStatus(400);
             setErrorState(ErrorState.CLOSE_CLEAN, e);
         }
+    }
+
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * This implementation populates the server port from the local port
+     * provided by the AJP message.
+     */
+    @Override
+    protected void populatePort() {
+        // No host information (HTTP/1.0)
+        request.setServerPort(request.getLocalPort());
     }
 
 
@@ -1129,7 +1140,7 @@ public class AjpProcessor extends AbstractProcessor {
 
 
     @Override
-    protected final boolean isReady() {
+    protected final boolean isReadyForWrite() {
         return responseMsgPos == -1 && socketWrapper.isReadyForWrite();
     }
 

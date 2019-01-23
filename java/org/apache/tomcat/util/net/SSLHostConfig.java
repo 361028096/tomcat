@@ -61,6 +61,7 @@ public class SSLHostConfig implements Serializable {
         SSL_PROTO_ALL_SET.add(Constants.SSL_PROTO_TLSv1);
         SSL_PROTO_ALL_SET.add(Constants.SSL_PROTO_TLSv1_1);
         SSL_PROTO_ALL_SET.add(Constants.SSL_PROTO_TLSv1_2);
+        SSL_PROTO_ALL_SET.add(Constants.SSL_PROTO_TLSv1_3);
     }
 
     private Type configType = null;
@@ -81,6 +82,10 @@ public class SSLHostConfig implements Serializable {
     private String[] enabledCiphers;
     private String[] enabledProtocols;
     private ObjectName oname;
+    // Need to know if TLS 1.3 has been explicitly requested as a warning needs
+    // to generated if it is explicitly requested for a JVM that does not
+    // support it. Uses a set so it is extensible for TLS 1.4 etc.
+    private Set<String> explicitlyRequestedProtocols = new HashSet<>();
     // Nested
     private SSLHostConfigCertificate defaultCertificate = null;
     private Set<SSLHostConfigCertificate> certificates = new HashSet<>(4);
@@ -333,6 +338,16 @@ public class SSLHostConfig implements Serializable {
     }
 
 
+    public void setCertificateVerificationAsString(String certificateVerification) {
+        setCertificateVerification(certificateVerification);
+    }
+
+
+    public String getCertificateVerificationAsString() {
+        return certificateVerification.toString();
+    }
+
+
     public void setCertificateVerificationDepth(int certificateVerificationDepth) {
         this.certificateVerificationDepth = certificateVerificationDepth;
         certificateVerificationDepthConfigured = true;
@@ -439,6 +454,7 @@ public class SSLHostConfig implements Serializable {
 
     public void setProtocols(String input) {
         protocols.clear();
+        explicitlyRequestedProtocols.clear();
 
         // List of protocol names, separated by ",", "+" or "-".
         // Semantics is adding ("+") or removing ("-") from left
@@ -461,6 +477,7 @@ public class SSLHostConfig implements Serializable {
                         protocols.addAll(SSL_PROTO_ALL_SET);
                     } else {
                         protocols.add(trimmed);
+                        explicitlyRequestedProtocols.add(trimmed);
                     }
                 } else if (trimmed.charAt(0) == '-') {
                     trimmed = trimmed.substring(1).trim();
@@ -468,6 +485,7 @@ public class SSLHostConfig implements Serializable {
                         protocols.removeAll(SSL_PROTO_ALL_SET);
                     } else {
                         protocols.remove(trimmed);
+                        explicitlyRequestedProtocols.remove(trimmed);
                     }
                 } else {
                     if (trimmed.charAt(0) == ',') {
@@ -481,6 +499,7 @@ public class SSLHostConfig implements Serializable {
                         protocols.addAll(SSL_PROTO_ALL_SET);
                     } else {
                         protocols.add(trimmed);
+                        explicitlyRequestedProtocols.add(trimmed);
                     }
                 }
             }
@@ -490,6 +509,11 @@ public class SSLHostConfig implements Serializable {
 
     public Set<String> getProtocols() {
         return protocols;
+    }
+
+
+    boolean isExplicitlyRequestedProtocol(String protocol) {
+        return explicitlyRequestedProtocols.contains(protocol);
     }
 
 

@@ -398,14 +398,16 @@ public interface Context extends Container, ContextBind {
     /**
      * Obtain the document root for this Context.
      *
-     * @return An absolute pathname, a relative pathname, or a URL.
+     * @return An absolute pathname or a relative (to the Host's appBase)
+     *         pathname.
      */
     public String getDocBase();
 
 
     /**
-     * Set the document root for this Context.  This can be an absolute
-     * pathname, a relative pathname, or a URL.
+     * Set the document root for this Context. This can be either an absolute
+     * pathname or a relative pathname. Relative pathnames are relative to the
+     * containing Host's appBase.
      *
      * @param docBase The new document root
      */
@@ -1843,4 +1845,24 @@ public interface Context extends Container, ContextBind {
      * @return The default response body encoding
      */
     public String getResponseCharacterEncoding();
+
+    /**
+     * Configure if, when returning a context path from {@link
+     * javax.servlet.http.HttpServletRequest#getContextPath()}, the return value
+     * is allowed to contain multiple leading '/' characters.
+     *
+     * @param allowMultipleLeadingForwardSlashInPath The new value for the flag
+     */
+    public void setAllowMultipleLeadingForwardSlashInPath(
+            boolean allowMultipleLeadingForwardSlashInPath);
+
+    /**
+     * When returning a context path from {@link
+     * javax.servlet.http.HttpServletRequest#getContextPath()}, is it allowed to
+     * contain multiple leading '/' characters?
+     *
+     * @return <code>true</code> if multiple leading '/' characters are allowed,
+     *         otherwise <code>false</code>
+     */
+    public boolean getAllowMultipleLeadingForwardSlashInPath();
 }
